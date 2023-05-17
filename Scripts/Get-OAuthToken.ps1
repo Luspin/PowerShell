@@ -5,7 +5,6 @@
 function Get-OAuthToken {
 
     [CmdletBinding(DefaultParameterSetName = 'Default')]
-
     param (
         [Parameter(
             Mandatory = $true,
@@ -55,15 +54,16 @@ function Get-OAuthToken {
         Write-Verbose -Message "Issuing the $tokenRequest"
 
         $tokenRequest = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" `
-            -Method POST `
-            -Headers @{"Content-Type" = "application/x-www-form-urlencoded"} `
-            -Body $requestBody
+                            -Method POST `
+                            -Headers @{"Content-Type" = "application/x-www-form-urlencoded" } `
+                            -Body $requestBody
 
         return $tokenRequest.access_token
 
-    } catch [System.Net.WebException] {
+    }
+    catch [System.Net.WebException] {
         Write-Output "Unable to retrieve an OAuth token:`n'$($_.Exception.Message)'"
 
-        exit
+        Exit
     }
 }

@@ -1,20 +1,17 @@
 # STEP 1: Get the HTML file
 # How to create an open file and folder dialog box with PowerShell
 # https://github.com/myusefulrepo/Tips/blob/master/Tips%20%20-%20How%20to%20create%20an%20open%20file%20and%20folder%20dialog%20box%20with%20PowerShell.md
+Add-Type -AssemblyName "System.Windows.Forms"
 
-Add-Type -AssemblyName System.Windows.Forms
-
-$FileBrowser = New-Object System.Windows.Forms.OpenFileDialog `
+$FileBrowser = New-Object -TypeName System.Windows.Forms.OpenFileDialog `
     -Property @{ Filter = 'HTML Source File (*.html)|*.html' }
 
 $null = $FileBrowser.ShowDialog()
 
 $messageBody = Get-Content -Path $FileBrowser.FileNames -Raw
 
-
 # STEP 2: Credentials
 $credential = Get-Credential
-
 
 # STEP 3: Relay the HTML message
 # about Splatting - PowerShell | Microsoft Docs
