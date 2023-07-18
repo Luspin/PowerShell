@@ -9,26 +9,26 @@ function Get-OAuthToken {
         [Parameter(
             Mandatory = $true,
             Position = 0)]
-        [String]$TenantId,
+        [String] $TenantId,
 
         # 'Default' ParameterSet
         [Parameter(
             Mandatory = $true,
             ParameterSetName = 'Default',
             Position = 1)]
-        [String]$ClientId,
+        [String] $ClientId,
 
         [Parameter(
             Mandatory = $true,
             ParameterSetName = 'Default',
             Position = 2)]
-        [String]$ClientSecret,
+        [String] $ClientSecret,
 
         [Parameter(
             Mandatory = $false,
             ParameterSetName = 'Default',
             Position = 3)]
-        [String]$Scope,
+        [String] $Scope,
 
         # 'Alternate' ParameterSet
         [Parameter(
@@ -36,7 +36,7 @@ function Get-OAuthToken {
             ParameterSetName = 'Alternate',
             Position = 1,
             ValueFromPipeline)]
-        [Hashtable]$Options
+        [Hashtable] $Options
     )
 
     # Build the $requestBody

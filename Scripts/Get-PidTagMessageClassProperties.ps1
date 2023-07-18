@@ -3,7 +3,7 @@ function Get-PidTagMessageClassProperties {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [Int]$Value
+        [Int] $Value
     )
 
     $Properties = @{
