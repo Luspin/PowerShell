@@ -18,7 +18,7 @@ function Split-Cards {
 
         do {
             if ($FileData[$i].StartsWith("FN:")) {
-                $contactName = $FileData[$i]
+                $contactName = $FileData[$i].Replace("FN:", "")
             }
 
             $contact += ($FileData[$i] + "`r`n").TrimStart()
@@ -41,7 +41,7 @@ $i = 0
 $contactsCollection = Split-Cards -FilePath "$($PSScriptRoot)\Contacts.vcf"
 
 $contactsCollection | ForEach-Object {
-    $contactName = $_[0].Replace("FN:", "")
+    $contactName = $_[0]
     $_[1] | Out-File -FilePath "$PSScriptRoot\$($contactName).vcf" -Encoding UTF8
     $i++
 }
