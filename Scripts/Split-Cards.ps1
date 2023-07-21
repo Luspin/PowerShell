@@ -15,7 +15,12 @@ function Split-Cards {
     # Loop over each "BEGIN:VCARD" line
     foreach ($line in $BeginVCardLines) {
         $i = $line.ReadCount - 1
+
         do {
+            if ($FileData[$i].StartsWith("FN:")) {
+                $contactName = $FileData[$i]
+            }
+
             $contact += ($FileData[$i] + "`r`n").TrimStart()
             $i++
         } until (
@@ -23,8 +28,8 @@ function Split-Cards {
         )
 
         $contact += "END:VCARD" + "`r`n"
-        $contactsCollection += $contact
-        $contact  = $null
+        $contactsCollection += , @($contactName, [String[]]$contact)
+        $contact = $null
     }
 
     return $contactsCollection
@@ -33,9 +38,10 @@ function Split-Cards {
 
 $i = 0
 
-$contactsCollection = Split-Cards -FilePath $PSScriptRoot\Contacts.vcf
+$contactsCollection = Split-Cards -FilePath "$($PSScriptRoot)\Contacts.vcf"
 
 $contactsCollection | ForEach-Object {
-    $_ | Out-File -FilePath "$PSScriptRoot\$($i).vcf" -Encoding UTF8;
+    $contactName = $_[0].Replace("FN:", "")
+    $_[1] | Out-File -FilePath "$PSScriptRoot\$($contactName).vcf" -Encoding UTF8
     $i++
 }
