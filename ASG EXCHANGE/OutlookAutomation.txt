@@ -1,0 +1,97 @@
+#https://devblogs.microsoft.com/premier-developer/outlook-email-automation-with-powershell/
+Add-Type -assembly "Microsoft.Office.Interop.Outlook"
+Add-type -assembly "System.Runtime.Interopservices"
+$olFolders = “Microsoft.Office.Interop.Outlook.OlDefaultFolders” -as [type]
+$subFolderName = 'TestCalendar1'
+# a script sample from Powerhell In Action
+function Show-ErrorDetails {
+    param(
+        $ErrorRecord = $Error[0]
+    )
+    $ErrorRecord | Format-List -Property * -Force
+    $ErrorRecord.InvocationInfo | Format-List -Property *
+    $Exception = $ErrorRecord.Exception
+    for ($depth = 0; $null -ne $Exception; $depth++) {
+        "$depth" * 80 
+        $Exception | Format-List -Property * -Force 
+        $Exception = $Exception.InnerException 
+    }
+}
+
+function Move-SpecificMeetings {
+    param(
+        [Object]$meeting,
+        [Object]$targetfolder
+    )
+    [void]$meeting.Move($targetfolder);
+}
+
+$outlook = $null;
+$UserAddress = 'freeman@vjqg8.onmicrosoft.com'
+try {
+    $outlook = [Runtime.Interopservices.Marshal]::GetActiveObject('Outlook.Application')
+    $outlookWasAlreadyRunning = $true
+}
+catch {
+    try {
+        $Outlook = New-Object -comobject Outlook.Application
+        $outlookWasAlreadyRunning = $false
+    }
+    catch {
+        Show-ErrorDetails
+        write-host "You must exit Outlook first."
+        exit
+    }
+}
+try {
+    $namespace = $Outlook.GetNameSpace("MAPI")
+    $folder = $namespace.getDefaultFolder($olFolders::olFolderCalendar)
+    $targetfolder = $folder.Folders | where-object { $_.name -eq $subFolderName } | Select-Object -First 1;
+
+    if ($null -eq $targetfolder) {
+        Write-Host "Can not find the $subFolderName.Exit";
+        Exit;
+    }
+    $allRecipients = New-Object System.Collections.Generic.Dictionary"[String,String]";    
+    $folder.items | ForEach-Object {
+        $event = $PSItem;
+        if ($event.Organizer -ne 'freeman Peter') {
+            $inmeeting = $false;
+            $event.Recipients | ForEach-Object {
+                $e = $psitem;
+                if ($e.DisplayType -eq 0) {
+                    if (-Not $allRecipients.ContainsKey($e.Address)) {
+                        $allRecipients.Add($e.Address, ($e.AddressEntry.GetExchangeUser()).PrimarySmtpAddress);
+                    }
+                    $emailAddress = $allRecipients[$e.Address];
+                    if (($inmeeting -eq $false) -and ($null -ne $emailAddress) -and ($emailAddress -eq $UserAddress)) {
+                        $inmeeting = $true;
+                    }
+                }
+            }
+
+            if ($inmeeting -eq $false) {
+                Move-SpecificMeetings $event $targetfolder;
+            }
+            [Runtime.Interopservices.Marshal]::ReleaseComObject($event) | Out-Null;
+            $event = $null;
+        }
+    }
+    [Runtime.Interopservices.Marshal]::ReleaseComObject($folder) | Out-Null;   
+    $folder=$null;
+    [Runtime.Interopservices.Marshal]::ReleaseComObject($targetfolder) | Out-Null;
+    $targetfolder=$null;
+}
+Catch {
+    Show-ErrorDetails;
+}
+Finally {
+    if (-not $outlookWasAlreadyRunning) {
+        if ($null -ne $outlook) {
+            $outlook.Quit();
+            [Runtime.Interopservices.Marshal]::ReleaseComObject($event) | Out-Null;
+            Start-Sleep -Seconds 10
+            Get-Process "*outlook*" | Stop-Process –force
+        }    
+    }
+}

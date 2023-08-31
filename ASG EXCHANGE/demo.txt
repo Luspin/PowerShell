@@ -1,0 +1,194 @@
+function TraceHandler() {
+    $sourceCode = @"
+    public class ewsTraceListener : Microsoft.Exchange.WebServices.Data.ITraceListener
+    {
+        public System.String LogFile {get;set;}
+        public void Trace(System.String traceType, System.String traceMessage)
+        {
+            System.IO.File.AppendAllText(this.LogFile, traceMessage);
+        }
+    }
+"@   
+    Add-Type -TypeDefinition $sourceCode -Language CSharp -ReferencedAssemblies $dllpath;
+    $TraceListener = New-Object ewsTraceListener
+    return $TraceListener
+}
+
+Function Find-TargetFolder {
+    param(
+        [Parameter(Position = 0, Mandatory = $True)]
+        [Microsoft.Exchange.WebServices.Data.ExchangeService]$exchangeWebService,
+        [Parameter(Position = 1, Mandatory = $True)]
+        [Microsoft.Exchange.WebServices.Data.FolderId]$folderId,
+        [Parameter(Position = 2, Mandatory = $True)]
+        [String]$targetFolder
+    )
+    $FolderView = new-object Microsoft.Exchange.WebServices.Data.FolderView(2000);
+    $FolderView.PropertySet = new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.FolderSchema]::DisplayName, [Microsoft.Exchange.WebServices.Data.FolderSchema]::Id, [Microsoft.Exchange.WebServices.Data.FolderSchema]::TotalCount);
+    $FolderView.Traversal = [Microsoft.Exchange.WebServices.Data.FolderTraversal]::Deep;
+
+    $Folder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($exchangeWebService, $folderId);
+    $targetMailboxFolder = $null;
+    $folders = $Folder.FindFolders($FolderView)
+
+    $folders | ForEach-Object {
+        if ($PSItem.DisplayName -eq $targetFolder) {
+            $targetMailboxFolder = $PSItem;
+        }
+    }
+    if ($null -eq $targetMailboxFolder) {
+        $targetMailboxFolder = new-object Microsoft.Exchange.WebServices.Data.Folder($exchangeWebService);
+        $targetMailboxFolder.DisplayName = $targetFolder;
+        $targetMailboxFolder.FolderClass = "IPF.Appointment";
+        $targetMailboxFolder.Save($folderId)
+    }
+    $targetMailboxFolder;
+    return;
+}
+
+Function Get-SearchFilter {
+    param (
+        [Parameter(Position = 0, Mandatory = $True)]
+        [DateTime] $StartDateTime,
+        [Parameter(Position = 1, Mandatory = $True)]
+        [DateTime] $EndDateTime,        
+        [Parameter(Position = 2, Mandatory = $False)]
+        [String] $SubjectString
+    )
+    $searchFilterCollection = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And);
+    $sf1 = new-object Microsoft.Exchange.WebServices.Data.SearchFilter+IsGreaterThanOrEqualTo([Microsoft.Exchange.WebServices.Data.ItemSchema]::DateTimeCreated, $startDateTime);
+    $sf2 = new-object Microsoft.Exchange.WebServices.Data.SearchFilter+IsLessThanOrEqualTo([Microsoft.Exchange.WebServices.Data.ItemSchema]::DateTimeCreated, $endDateTime);
+    $searchFilterCollection.Add($sf1);
+    $searchFilterCollection.Add($sf2);
+
+    if (-Not [String]::IsNullOrEmpty($SubjectString)) {
+        $sf3 = new-object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.ItemSchema]::Subject, $SubjectString, [Microsoft.Exchange.WebServices.Data.ContainmentMode]::Substring, [Microsoft.Exchange.WebServices.Data.ComparisonMode]::IgnoreCase);
+        $searchFilterCollection.Add($sf3);
+    }
+    $Global:searchFilter = $searchFilterCollection;
+    return;
+}
+
+Function Move-SpecificEvents {
+    param(
+        [Parameter(Position = 0, Mandatory = $True)]
+        [Microsoft.Exchange.WebServices.Data.ExchangeService]$service,
+        [Parameter(Position = 1, Mandatory = $True)]
+        [Microsoft.Exchange.WebServices.Data.FolderId]$SourceFolderId,
+        [Parameter(Position = 2, Mandatory = $True)]
+        [Microsoft.Exchange.WebServices.Data.Folder]$TargetFolder,
+        [Parameter(Position = 3, Mandatory = $True)]
+        [Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection]$searchFilter
+    )
+    $pageSize = 100;
+    $offset = 0;
+    $view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(($pageSize + 1), $offset);
+    $view.PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet -ArgumentList ([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties, [Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::InternetMessageId);
+    $view.Traversal = [Microsoft.Exchange.WebServices.Data.ItemTraversal]::Shallow;
+
+    # refer to paging implementation https://docs.microsoft.com/en-us/exchange/client-developer/exchange-web-services/how-to-perform-paged-searches-by-using-ews-in-exchange
+    [bool]$moreItems = $true;
+    [Microsoft.Exchange.WebServices.Data.ItemId]$anchorId = $null;
+
+    $idList = New-Object System.Collections.Generic.List[Microsoft.Exchange.WebServices.Data.ItemId];
+    $itemCount = 0;
+
+    while ($moreItems) {
+        $result = $service.FindItems($SourceFolderId, $searchFilter, $view);
+        $itemCount = $itemCount + $result.Items.Count; 
+        $moreItems = $result.MoreAvailable;
+
+        if (($null -eq $result) -or ($null -eq $result.Items) -or ($result.Items.Count -eq 0)) {
+            break;    
+        }
+    
+        if ($moreItems -and ($null -ne $anchorId)) {
+            $testId = $result.Items[0].Id;
+            if ($testId -ne $anchorId) {
+                Write-Host "The collection has changed while paging. Some results may be missed.";
+            }
+        }
+        
+        if ($moreItems) {
+            $view.Offset = $view.Offset + $pageSize;
+        }
+        $anchorId = $result.Items[$result.Items.Count - 1].Id;    
+
+        $result.Items | ForEach-Object {
+            $message = $PSItem -as [Microsoft.Exchange.WebServices.Data.Appointment];
+            if ($null -ne $message) {
+                $idList.Add($message.Id);           
+            }
+        }
+        $result = $null;
+    }
+
+    $batchSize = $pageSize;
+    $total = 0;
+
+    while ($total -lt $idList.Count) {
+        $batch = $idList | Select-Object -Skip $total -First $batchSize
+        $ids = New-Object 'System.Collections.Generic.List[Microsoft.Exchange.WebServices.Data.ItemId]';
+        $batch | ForEach-Object { $ids.Add($PSItem) };
+        if ($batch.Count -ge 0) {
+            $service.MoveItems($ids, $TargetFolder.Id) | Out-Null;
+        }
+        $total += $batchSize;
+    }
+}
+
+# EWS authentication
+Add-Type -Path '\\sha-fs-01a\ASG-EXCHANGE\dongqi\Libs\Microsoft.Identity.Client.dll';
+
+# Some constants
+$tenantID = "cff343b2-f0ff-416a-802b-28595997daa2";
+$appId = "54bbc47b-fbf6-442b-88d1-6611c263e497";
+$Mailbox = "LidiaH@vjqg8.onmicrosoft.com";
+[DateTime]$StartDateTime = "2020-01-01";
+[DateTime]$EndDateTime = "2023-01-01"
+[String] $SubjectString = "Test1234";
+
+[System.Collections.Generic.IEnumerable[string]]$ewsScopes = New-Object System.Collections.Generic.List[string];
+$ewsScopes.Add("https://outlook.office.com/EWS.AccessAsUser.All");
+$pcaOptions = New-Object Microsoft.Identity.Client.PublicClientApplicationOptions;
+$pcaOptions.ClientId = $appId;
+$pcaOptions.TenantId = $tenantID;
+$app = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::CreateWithApplicationOptions($pcaOptions).Build();
+$result = ($app.AcquireTokenInteractive($ewsScopes).ExecuteAsync()).Result;
+
+$folderName = (Get-Date).ToString('yyyyMMddHHmmss');
+$subFolderName = "TempCalendar4DLP_$folderName";
+
+$uri = [system.URI] "https://outlook.office365.com/EWS/Exchange.asmx"
+$dllpath = "C:\Temp\Microsoft.Exchange.WebServices.dll"
+Add-Type -Path $dllpath
+
+# Set Exchange Version
+$ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013;
+$service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ExchangeVersion);
+$service.Credentials = New-Object Microsoft.Exchange.WebServices.Data.OAuthCredentials -ArgumentList $result.AccessToken;
+$service.url = $uri;
+$service.UserAgent = "Test20200619";
+
+$service.TraceEnabled = $true
+$TraceHandlerObj = TraceHandler
+$TraceHandlerObj.LogFile = "C:\Temp\$Mailbox.log";
+$service.TraceListener = $TraceHandlerObj;
+$service.HttpHeaders.Add("X-AnchorMailbox", $Mailbox);
+
+$calendarFolderid = new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Calendar, $Mailbox);
+if ($null -eq $calendarFolderid) {	
+    Write-Error 'Can not find the calendarFolderid,exit'
+    exit
+}
+
+$targetFolder = Find-TargetFolder $service $calendarFolderid $subFolderName
+if ($null -eq $targetFolder) {	
+    Write-Error 'Can not find the targetFolder,exit'
+    exit
+}
+
+
+[Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection]$Global:searchFilter = $null;
+Get-SearchFilter -StartDateTime $StartDateTime -EndDateTime $EndDateTime -SubjectString $SubjectString;
+Move-SpecificEvents $service $calendarFolderid $targetFolder $Global:searchFilter;
