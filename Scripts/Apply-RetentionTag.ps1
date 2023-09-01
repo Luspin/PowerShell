@@ -107,7 +107,7 @@ foreach ($folderName in $targetFolderNames) {
         # TO CLEAR THE VALUE:
         $folder.RemoveExtendedProperty($PR_ARCHIVE_TAG) # working!
         # $folder.RemoveExtendedProperty($PR_RETENTION_FLAGS)  
-        $folder.SetExtendedProperty($PR_RETENTION_FLAGS, -2147221233)
+        $folder.SetExtendedProperty($PR_RETENTION_FLAGS, 0x00000080)
         $folder.RemoveExtendedProperty($PR_ARCHIVE_PERIOD)  
 
         # Save changes to the $folder
